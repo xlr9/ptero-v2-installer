@@ -166,6 +166,21 @@ install_panel() {
         echo ""
     done
 
+    # Sanitize inputs (strip invisible unicode, ANSI sequences, carriage returns, leading/trailing whitespace)
+    DB_NAME=$(echo "$DB_NAME" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9_]//g')
+    DB_USER=$(echo "$DB_USER" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9_]//g')
+    DB_PASS=$(echo "$DB_PASS" | tr -d '\r\n')
+    TIMEZONE=$(echo "$TIMEZONE" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9_\/+-]//g')
+    FQDN=$(echo "$FQDN" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9.-]//g')
+    CONF_UFW=$(echo "$CONF_UFW" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z]//g')
+    CONF_SSL=$(echo "$CONF_SSL" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z]//g')
+    SSL_EMAIL=$(echo "$SSL_EMAIL" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9._%+-@]//g')
+    ADMIN_EMAIL=$(echo "$ADMIN_EMAIL" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9._%+-@]//g')
+    ADMIN_USER=$(echo "$ADMIN_USER" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9_.-]//g')
+    ADMIN_FIRST=$(echo "$ADMIN_FIRST" | tr -d '\r\n\t' | tr -cd '[:print:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    ADMIN_LAST=$(echo "$ADMIN_LAST" | tr -d '\r\n\t' | tr -cd '[:print:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    ADMIN_PASS=$(echo "$ADMIN_PASS" | tr -d '\r\n')
+
     # Summary
     echo ""
     output "Configuration summary:"
@@ -301,6 +316,18 @@ EOF
         PROTOCOL="https"
     fi
 
+    # Write clean environment settings directly to .env
+    sed -i "s|^APP_URL=.*|APP_URL=${PROTOCOL}://${FQDN}|" .env
+    sed -i "s|^APP_TIMEZONE=.*|APP_TIMEZONE=${TIMEZONE}|" .env
+    sed -i "s|^APP_SERVICE_AUTHOR=.*|APP_SERVICE_AUTHOR=${ADMIN_EMAIL}|" .env
+    sed -i "s|^CACHE_DRIVER=.*|CACHE_DRIVER=redis|" .env
+    sed -i "s|^SESSION_DRIVER=.*|SESSION_DRIVER=redis|" .env
+    sed -i "s|^QUEUE_CONNECTION=.*|QUEUE_CONNECTION=redis|" .env
+    sed -i "s|^REDIS_HOST=.*|REDIS_HOST=127.0.0.1|" .env
+    sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=null|" .env
+    sed -i "s|^REDIS_PORT=.*|REDIS_PORT=6379|" .env
+
+    # Run artisan environment setup as complementary config
     php artisan p:environment:setup \
         --author="${ADMIN_EMAIL}" \
         --url="${PROTOCOL}://${FQDN}" \
@@ -313,7 +340,7 @@ EOF
         --redis-port="6379" \
         --settings-ui=true \
         --telemetry=false \
-        --no-interaction
+        --no-interaction || true
 
     # Write Database Credentials directly to .env
     sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=mysql/" .env
