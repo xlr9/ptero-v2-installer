@@ -202,13 +202,37 @@ install_panel() {
         apt-get update -q -y
     fi
 
+    # Install PHP 8.3 and ensure PHP-FPM is running
     output "Installing PHP 8.3 and dependencies..."
     apt-get install -q -y php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip,intl}
+    systemctl enable --now php8.3-fpm
 
     # Install Composer
     if ! command -v composer &> /dev/null; then
         output "Installing Composer 2..."
         curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    fi
+
+    # Install Node.js 22 (Required for building Pterodactyl 2.0 frontend)
+    NODE_MAJOR=0
+    if command -v node &> /dev/null; then
+        NODE_MAJOR=$(node -v | cut -d'.' -f1 | tr -d 'v')
+    fi
+    if [ "$NODE_MAJOR" -lt 22 ]; then
+        output "Installing Node.js 22..."
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        apt-get install -q -y nodejs
+    fi
+
+    # Ensure sufficient memory/swap for Vite build on VPS with <= 2GB RAM
+    TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+    TOTAL_SWAP=$(free -m | awk '/^Swap:/{print $2}')
+    if [ $((TOTAL_MEM + TOTAL_SWAP)) -lt 3000 ] && [ ! -f /swapfile ]; then
+        output "Allocating 2GB swap space for build requirements..."
+        fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
     fi
 
     # MariaDB Setup
@@ -229,7 +253,7 @@ GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 EOF
 
-    # Download Panel v2
+    # Download Panel v2 (2.0-develop)
     if [ -d "/var/www/pterodactyl" ] && [ "$(ls -A /var/www/pterodactyl 2>/dev/null)" ]; then
         warning "Directory /var/www/pterodactyl already exists and is not empty."
         read -rp "* Clean up /var/www/pterodactyl for a clean installation? (Y/n): " WIPE
@@ -239,12 +263,12 @@ EOF
         fi
     fi
 
-    output "Downloading Pterodactyl Panel v2..."
+    output "Downloading Pterodactyl Panel 2.0 (2.0-develop branch)..."
     mkdir -p /var/www/pterodactyl
     cd /var/www/pterodactyl
 
-    curl -Lo panel.tar.gz "https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz"
-    tar -xzf panel.tar.gz
+    curl -Lo panel.tar.gz "https://github.com/pterodactyl/panel/archive/refs/heads/2.0-develop.tar.gz"
+    tar -xzf panel.tar.gz --strip-components=1
     rm -f panel.tar.gz
 
     chmod -R 755 storage/* bootstrap/cache/
@@ -255,6 +279,11 @@ EOF
         cp .env.example .env
     fi
     COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
+
+    output "Building Pterodactyl 2.0 frontend (Vite & React 19)..."
+    export NODE_OPTIONS="--max-old-space-size=2048"
+    npm ci --include=dev || npm install --include=dev
+    npm run build:production
     php artisan key:generate --force
 
     PROTOCOL="http"
@@ -273,7 +302,8 @@ EOF
         --redis-pass="" \
         --redis-port="6379" \
         --settings-ui=true \
-        --telemetry=false
+        --telemetry=false \
+        --no-interaction
 
     # Write Database Credentials directly to .env
     sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=mysql/" .env
@@ -528,15 +558,20 @@ upgrade_panel() {
     output "Enabling maintenance mode..."
     php artisan down || true
 
-    output "Downloading newest panel release..."
-    curl -Lo panel.tar.gz "https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz"
-    tar -xzf panel.tar.gz
+    output "Downloading newest panel 2.0 (2.0-develop branch)..."
+    curl -Lo panel.tar.gz "https://github.com/pterodactyl/panel/archive/refs/heads/2.0-develop.tar.gz"
+    tar -xzf panel.tar.gz --strip-components=1
     rm -f panel.tar.gz
 
     chmod -R 755 storage/* bootstrap/cache/
 
     output "Updating composer dependencies..."
     COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
+
+    output "Building Pterodactyl 2.0 frontend (Vite & React 19)..."
+    export NODE_OPTIONS="--max-old-space-size=2048"
+    npm ci --include=dev || npm install --include=dev
+    npm run build:production
 
     output "Running migrations..."
     php artisan migrate --seed --force
