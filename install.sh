@@ -221,6 +221,15 @@ FLUSH PRIVILEGES;
 EOF
 
     # Download Panel v2
+    if [ -d "/var/www/pterodactyl" ] && [ "$(ls -A /var/www/pterodactyl 2>/dev/null)" ]; then
+        warning "Directory /var/www/pterodactyl already exists and is not empty."
+        read -rp "* Clean up /var/www/pterodactyl for a clean installation? (Y/n): " WIPE
+        WIPE=${WIPE:-y}
+        if [[ "$WIPE" =~ ^[Yy]$ ]]; then
+            rm -rf /var/www/pterodactyl/* /var/www/pterodactyl/.* 2>/dev/null || true
+        fi
+    fi
+
     output "Downloading Pterodactyl Panel v2..."
     mkdir -p /var/www/pterodactyl
     cd /var/www/pterodactyl
@@ -233,7 +242,9 @@ EOF
 
     # Setup Environment
     output "Setting up environment and dependencies..."
-    cp -n .env.example .env
+    if [ ! -f .env ]; then
+        cp .env.example .env
+    fi
     COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
     php artisan key:generate --force
 
@@ -243,6 +254,7 @@ EOF
     fi
 
     php artisan p:environment:setup \
+        --author="${ADMIN_EMAIL}" \
         --url="${PROTOCOL}://${FQDN}" \
         --timezone="${TIMEZONE}" \
         --cache="redis" \
@@ -261,15 +273,9 @@ EOF
         --username="${DB_USER}" \
         --password="${DB_PASS}"
 
-    php artisan p:environment:mail \
-        --driver="smtp" \
-        --host="127.0.0.1" \
-        --port="25" \
-        --encryption="" \
-        --username="" \
-        --password="" \
-        --from-address="no-reply@${FQDN}" \
-        --from-name="Pterodactyl"
+    # Configure mail defaults in .env
+    sed -i "s/MAIL_FROM_ADDRESS=.*/MAIL_FROM_ADDRESS=no-reply@${FQDN}/" .env 2>/dev/null || true
+    sed -i "s/MAIL_FROM_NAME=.*/MAIL_FROM_NAME=Pterodactyl/" .env 2>/dev/null || true
 
     output "Running database migrations..."
     php artisan migrate --seed --force
