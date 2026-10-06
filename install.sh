@@ -487,10 +487,31 @@ install_wings() {
 
     read -rp "* Do you want to automatically configure UFW (firewall)? (y/N): " CONF_UFW
     CONF_UFW=${CONF_UFW:-n}
+    CONF_UFW=$(echo "$CONF_UFW" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z]//g')
+
+    read -rp "* Do you want to automatically configure HTTPS using Let's Encrypt? (y/N): " CONF_SSL
+    CONF_SSL=${CONF_SSL:-n}
+    CONF_SSL=$(echo "$CONF_SSL" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z]//g')
+
+    if [[ "$CONF_SSL" =~ ^[Yy]$ ]]; then
+        read -rp "* Set the FQDN for this node (e.g. node.example.com): " NODE_FQDN
+        while [[ -z "$NODE_FQDN" ]]; do
+            error "FQDN cannot be empty!"
+            read -rp "* Set the FQDN for this node: " NODE_FQDN
+        done
+        NODE_FQDN=$(echo "$NODE_FQDN" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9.-]//g')
+
+        read -rp "* Enter email address for Let's Encrypt: " NODE_SSL_EMAIL
+        while [[ -z "$NODE_SSL_EMAIL" ]]; do
+            error "Email cannot be empty!"
+            read -rp "* Enter email address for Let's Encrypt: " NODE_SSL_EMAIL
+        done
+        NODE_SSL_EMAIL=$(echo "$NODE_SSL_EMAIL" | tr -d '\r\n\t ' | sed -E 's/[^a-zA-Z0-9._%+-@]//g')
+    fi
 
     output "Updating package list..."
     apt-get update -q -y
-    apt-get install -q -y curl tar unzip ufw
+    apt-get install -q -y curl tar unzip ufw certbot python3-certbot-nginx
 
     # Docker Installation
     if ! command -v docker &> /dev/null; then
@@ -548,6 +569,21 @@ EOF
         ufw allow 8080/tcp || true
         ufw allow 2022/tcp || true
         ufw --force enable || true
+    fi
+
+    # SSL Let's Encrypt for Wings
+    if [[ "$CONF_SSL" =~ ^[Yy]$ ]]; then
+        output "Obtaining Let's Encrypt SSL certificate for ${NODE_FQDN}..."
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+            certbot certonly --nginx -d "${NODE_FQDN}" --non-interactive --agree-tos -m "${NODE_SSL_EMAIL}" || \
+            certbot certonly --webroot -w /var/www/pterodactyl/public -d "${NODE_FQDN}" --non-interactive --agree-tos -m "${NODE_SSL_EMAIL}" || {
+                warning "Certbot was unable to automatically provision SSL. Make sure your domain's DNS points to this server IP."
+            }
+        else
+            certbot certonly --standalone -d "${NODE_FQDN}" --non-interactive --agree-tos -m "${NODE_SSL_EMAIL}" || {
+                warning "Certbot was unable to automatically provision SSL. Make sure your domain's DNS points to this server IP."
+            }
+        fi
     fi
 
     print_header
