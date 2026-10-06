@@ -237,6 +237,16 @@ install_panel() {
 
     # MariaDB Setup
     output "Configuring MariaDB database and user..."
+    DB_EXISTS=$(mariadb -u root -sse "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}'" 2>/dev/null || true)
+    if [ "$DB_EXISTS" == "${DB_NAME}" ]; then
+        warning "Database '${DB_NAME}' already exists."
+        read -rp "* Clean and recreate database for a clean installation? (Y/n): " WIPE_DB
+        WIPE_DB=${WIPE_DB:-y}
+        if [[ "$WIPE_DB" =~ ^[Yy]$ ]]; then
+            mariadb -u root -e "DROP DATABASE \`${DB_NAME}\`;"
+        fi
+    fi
+
     mariadb -u root <<EOF
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;
 DROP USER IF EXISTS '${DB_USER}'@'127.0.0.1';
@@ -259,7 +269,7 @@ EOF
         read -rp "* Clean up /var/www/pterodactyl for a clean installation? (Y/n): " WIPE
         WIPE=${WIPE:-y}
         if [[ "$WIPE" =~ ^[Yy]$ ]]; then
-            rm -rf /var/www/pterodactyl/* /var/www/pterodactyl/.* 2>/dev/null || true
+            find /var/www/pterodactyl -mindepth 1 -delete 2>/dev/null || rm -rf /var/www/pterodactyl/*
         fi
     fi
 
@@ -335,7 +345,7 @@ EOF
         --name-first="${ADMIN_FIRST}" \
         --name-last="${ADMIN_LAST}" \
         --password="${ADMIN_PASS}" \
-        --admin=1
+        --admin=1 || warning "Administrator account already exists or could not be created; continuing setup."
 
     output "Setting permissions..."
     chown -R www-data:www-data /var/www/pterodactyl/*
