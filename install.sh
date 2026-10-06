@@ -252,17 +252,24 @@ install_panel() {
 
     # MariaDB Setup
     output "Configuring MariaDB database and user..."
-    DB_EXISTS=$(mariadb -u root -sse "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}'" 2>/dev/null || true)
+    MARIADB_AUTH="mariadb -u root"
+    if ! $MARIADB_AUTH -e "SELECT 1" &>/dev/null; then
+        read -rsp "* MariaDB root password required: " ROOT_SQL_PW
+        echo ""
+        MARIADB_AUTH="mariadb -u root -p${ROOT_SQL_PW}"
+    fi
+
+    DB_EXISTS=$($MARIADB_AUTH -sse "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}'" 2>/dev/null || true)
     if [ "$DB_EXISTS" == "${DB_NAME}" ]; then
         warning "Database '${DB_NAME}' already exists."
         read -rp "* Clean and recreate database for a clean installation? (Y/n): " WIPE_DB
         WIPE_DB=${WIPE_DB:-y}
         if [[ "$WIPE_DB" =~ ^[Yy]$ ]]; then
-            mariadb -u root -e "DROP DATABASE \`${DB_NAME}\`;"
+            $MARIADB_AUTH -e "DROP DATABASE \`${DB_NAME}\`;"
         fi
     fi
 
-    mariadb -u root <<EOF
+    $MARIADB_AUTH <<EOF
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;
 DROP USER IF EXISTS '${DB_USER}'@'127.0.0.1';
 DROP USER IF EXISTS '${DB_USER}'@'localhost';
@@ -375,7 +382,7 @@ EOF
         --admin=1 || warning "Administrator account already exists or could not be created; continuing setup."
 
     output "Setting permissions..."
-    chown -R www-data:www-data /var/www/pterodactyl/*
+    chown -R www-data:www-data /var/www/pterodactyl
 
     # Cronjob
     output "Setting up cronjob..."
@@ -641,6 +648,17 @@ upgrade_panel() {
     output "Updating composer dependencies..."
     COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
 
+    # Verify Node.js 22 is available for building v2 frontend
+    NODE_MAJOR=0
+    if command -v node &> /dev/null; then
+        NODE_MAJOR=$(node -v | cut -d'.' -f1 | tr -d 'v')
+    fi
+    if [ "$NODE_MAJOR" -lt 22 ]; then
+        output "Installing Node.js 22..."
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        apt-get install -q -y nodejs
+    fi
+
     output "Building Pterodactyl 2.0 frontend (Vite & React 19)..."
     export NODE_OPTIONS="--max-old-space-size=2048"
     npm ci --include=dev || npm install --include=dev
@@ -654,7 +672,7 @@ upgrade_panel() {
     php artisan config:clear
 
     output "Fixing permissions..."
-    chown -R www-data:www-data /var/www/pterodactyl/*
+    chown -R www-data:www-data /var/www/pterodactyl
 
     output "Restarting queue worker..."
     systemctl restart pteroq.service
@@ -716,7 +734,7 @@ uninstall_pterodactyl() {
     read -rp "* Select option: " UN_CHOICE
 
     case "$UN_CHOICE" in
-        0|2)
+        0)
             output "Removing Panel..."
             systemctl stop pteroq.service 2>/dev/null || true
             systemctl disable pteroq.service 2>/dev/null || true
@@ -728,21 +746,44 @@ uninstall_pterodactyl() {
             systemctl restart nginx 2>/dev/null || true
 
             rm -rf /var/www/pterodactyl
-            success "Panel removed."
-            ;&
-        1|2)
-            if [[ "$UN_CHOICE" == "1" || "$UN_CHOICE" == "2" ]]; then
-                output "Removing Wings..."
-                systemctl stop wings 2>/dev/null || true
-                systemctl disable wings 2>/dev/null || true
-                rm -f /etc/systemd/system/wings.service
-                systemctl daemon-reload
+            success "Panel removed successfully."
+            ;;
+        1)
+            output "Removing Wings..."
+            systemctl stop wings 2>/dev/null || true
+            systemctl disable wings 2>/dev/null || true
+            rm -f /etc/systemd/system/wings.service
+            systemctl daemon-reload
 
-                rm -f /usr/local/bin/wings
-                rm -rf /etc/pterodactyl
-                rm -rf /var/lib/pterodactyl
-                success "Wings removed."
-            fi
+            rm -f /usr/local/bin/wings
+            rm -rf /etc/pterodactyl
+            rm -rf /var/lib/pterodactyl
+            success "Wings removed successfully."
+            ;;
+        2)
+            output "Removing Panel..."
+            systemctl stop pteroq.service 2>/dev/null || true
+            systemctl disable pteroq.service 2>/dev/null || true
+            rm -f /etc/systemd/system/pteroq.service
+            systemctl daemon-reload
+
+            rm -f /etc/nginx/sites-enabled/pterodactyl.conf
+            rm -f /etc/nginx/sites-available/pterodactyl.conf
+            systemctl restart nginx 2>/dev/null || true
+
+            rm -rf /var/www/pterodactyl
+            success "Panel removed successfully."
+
+            output "Removing Wings..."
+            systemctl stop wings 2>/dev/null || true
+            systemctl disable wings 2>/dev/null || true
+            rm -f /etc/systemd/system/wings.service
+            systemctl daemon-reload
+
+            rm -f /usr/local/bin/wings
+            rm -rf /etc/pterodactyl
+            rm -rf /var/lib/pterodactyl
+            success "Wings removed successfully."
             ;;
         *)
             output "Uninstallation cancelled."
