@@ -215,13 +215,17 @@ install_panel() {
     output "Configuring MariaDB database and user..."
     mariadb -u root <<EOF
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;
-CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
-ALTER USER '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
-GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'127.0.0.1' WITH GRANT OPTION;
+DROP USER IF EXISTS '${DB_USER}'@'127.0.0.1';
+DROP USER IF EXISTS '${DB_USER}'@'localhost';
+DROP USER IF EXISTS '${DB_USER}'@'%';
 
-CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
-ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+CREATE USER '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
+CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+CREATE USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';
+
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'127.0.0.1' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 EOF
 
@@ -271,12 +275,21 @@ EOF
         --settings-ui=true \
         --telemetry=false
 
+    # Write Database Credentials directly to .env
+    sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=mysql/" .env
+    sed -i "s/^DB_HOST=.*/DB_HOST=127.0.0.1/" .env
+    sed -i "s/^DB_PORT=.*/DB_PORT=3306/" .env
+    sed -i "s/^DB_DATABASE=.*/DB_DATABASE=${DB_NAME}/" .env
+    sed -i "s/^DB_USERNAME=.*/DB_USERNAME=${DB_USER}/" .env
+    sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${DB_PASS}/" .env
+
     php artisan p:environment:database \
         --host="127.0.0.1" \
         --port="3306" \
         --database="${DB_NAME}" \
         --username="${DB_USER}" \
-        --password="${DB_PASS}"
+        --password="${DB_PASS}" \
+        --no-interaction || true
 
     # Configure mail defaults in .env
     sed -i "s/MAIL_FROM_ADDRESS=.*/MAIL_FROM_ADDRESS=no-reply@${FQDN}/" .env 2>/dev/null || true
